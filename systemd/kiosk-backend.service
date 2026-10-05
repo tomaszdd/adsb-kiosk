@@ -1,0 +1,15 @@
+[Unit]
+Description=Kiosk Backend
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/setup-app/app.py
+WorkingDirectory=/home/pi/setup-app
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+

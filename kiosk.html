@@ -1,0 +1,1663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=480, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ADS-B Kiosk</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@300;400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --bg: #080c10;
+    --bg2: #0d1520;
+    --bg3: #111d2e;
+    --amber: #f5a623;
+    --amber2: #ff6b00;
+    --green: #00ff88;
+    --blue: #00c8ff;
+    --red: #ff3b5c;
+    --text: #c8d8e8;
+    --dim: #4a6070;
+    --grid: rgba(0,200,255,0.04);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    width: 480px; height: 320px;
+    max-width: 480px;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 14px;
+    user-select: none;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.15) 2px,
+      rgba(0,0,0,0.15) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* Grid background */
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .screen { position: relative; z-index: 1; width: 480px; height: 320px; }
+
+  .align-btn {
+    width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,200,255,0.08); border: 1px solid var(--blue); border-radius: 3px;
+    color: var(--blue); font-size: 11px; cursor: pointer; user-select: none;
+  }
+  .align-btn:active { background: rgba(0,200,255,0.25); }
+
+  /* ===== TOP BAR ===== */
+  .topbar {
+    height: 32px;
+    background: linear-gradient(90deg, #0d1a28, #111d2e);
+    border-bottom: 1px solid rgba(0,200,255,0.2);
+    display: flex; align-items: center;
+    padding: 0 10px;
+    gap: 6px;
+  }
+
+  .topbar-logo {
+    font-family: 'Orbitron', monospace;
+    font-size: 11px;
+    font-weight: 900;
+    color: var(--amber);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    flex: 1;
+  }
+
+  .topbar-logo span { color: var(--blue); }
+
+  .topbar-stat {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--dim);
+    display: flex; align-items: center; gap: 3px;
+  }
+
+  .topbar-stat .dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 4px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  .topbar-stat .dot.off { background: var(--dim); box-shadow: none; animation: none; }
+  .topbar-stat .dot.red { background: var(--red); box-shadow: 0 0 4px var(--red); animation: none; }
+  .topbar-stat .dot.yellow { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ===== NAV BAR ===== */
+  .navbar {
+    height: 36px;
+    background: var(--bg2);
+    border-bottom: 1px solid rgba(245,166,35,0.15);
+    display: flex; align-items: stretch;
+  }
+
+  .nav-btn {
+    flex: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Orbitron', monospace;
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--dim);
+    cursor: pointer;
+    border-right: 1px solid rgba(0,200,255,0.08);
+    transition: all 0.15s;
+    text-transform: uppercase;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .nav-btn:last-child { border-right: none; }
+
+  .nav-btn .nav-icon { font-size: 13px; }
+
+  .nav-btn.active {
+    color: var(--amber);
+    background: rgba(245,166,35,0.08);
+    border-bottom: 2px solid var(--amber);
+  }
+
+  .nav-btn:not(.active):active {
+    background: rgba(0,200,255,0.05);
+    color: var(--blue);
+  }
+
+  /* ===== CONTENT AREA ===== */
+  .content { height: 252px; overflow: hidden; position: relative; }
+
+  .page { position: absolute; inset: 0; display: none; overflow: hidden; }
+  .page.active { display: block; }
+
+  /* ===== HOME PAGE ===== */
+  #page-home {
+    display: none;
+    padding: 12px;
+    gap: 8px;
+  }
+  #page-home.active { display: grid; grid-template-columns: 1fr 1fr; }
+
+  .home-card {
+    background: var(--bg3);
+    border: 1px solid rgba(0,200,255,0.12);
+    border-radius: 4px;
+    padding: 10px 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .home-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0,200,255,0.4), transparent);
+  }
+
+  .home-card:active {
+    background: rgba(0,200,255,0.08);
+    border-color: var(--blue);
+    transform: scale(0.97);
+  }
+
+  .home-card .card-icon { font-size: 22px; }
+
+  .home-card .card-label {
+    font-family: 'Orbitron', monospace;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--amber);
+    text-transform: uppercase;
+    text-align: center;
+  }
+
+  .home-card .card-desc {
+    font-size: 9px;
+    color: var(--dim);
+    text-align: center;
+    line-height: 1.3;
+  }
+
+  /* ===== MAP PAGE ===== */
+  #page-map { display: none; }
+  #page-map.active { display: block; }
+
+  #map-iframe {
+    width: 100%; height: 100%;
+    border: none;
+    background: var(--bg);
+  }
+
+  .map-overlay {
+    position: absolute; top: 6px; right: 6px;
+    background: rgba(8,12,16,0.85);
+    border: 1px solid rgba(245,166,35,0.3);
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--amber);
+  }
+
+  /* ===== HUD PAGE ===== */
+  #page-hud { display: none; overflow: hidden; }
+  #page-hud.active { display: flex; flex-direction: column; }
+
+  .hud-header {
+    padding: 6px 10px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid rgba(0,200,255,0.1);
+    background: var(--bg2);
+  }
+
+  .hud-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 9px;
+    color: var(--blue);
+    letter-spacing: 2px;
+  }
+
+  .hud-count {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--dim);
+  }
+
+  .hud-count span { color: var(--green); }
+
+  .hud-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: none;
+  }
+
+  .hud-list::-webkit-scrollbar { display: none; }
+
+  .aircraft-row {
+    display: grid;
+    grid-template-columns: 70px 28px 52px 52px 52px 1fr;
+    align-items: center;
+    padding: 5px 10px;
+    border-bottom: 1px solid rgba(0,200,255,0.05);
+    cursor: pointer;
+    transition: background 0.1s;
+    gap: 4px;
+  }
+
+  .aircraft-row:hover, .aircraft-row:active {
+    background: rgba(0,200,255,0.05);
+  }
+
+  .aircraft-row.selected {
+    background: rgba(245,166,35,0.08);
+    border-left: 2px solid var(--amber);
+  }
+
+  .ac-callsign {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--amber);
+    font-weight: bold;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ac-dir {
+    font-size: 16px;
+    text-align: center;
+    line-height: 1;
+  }
+
+  .ac-val {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--text);
+    text-align: right;
+  }
+
+  .ac-val .unit {
+    font-size: 7px;
+    color: var(--dim);
+    display: block;
+  }
+
+  .ac-flag {
+    font-size: 9px;
+    color: var(--dim);
+    font-family: 'Rajdhani', sans-serif;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .hud-col-headers {
+    display: grid;
+    grid-template-columns: 70px 28px 52px 52px 52px 1fr;
+    padding: 3px 10px;
+    gap: 4px;
+    background: rgba(0,200,255,0.03);
+    border-bottom: 1px solid rgba(0,200,255,0.08);
+  }
+
+  .hud-col-headers span {
+    font-family: 'Orbitron', monospace;
+    font-size: 6px;
+    color: var(--dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    text-align: right;
+  }
+
+  .hud-col-headers span:first-child { text-align: left; }
+  .hud-col-headers span:nth-child(2) { text-align: center; }
+
+  /* ===== OPENSKY PAGE ===== */
+  #page-opensky { display: none; flex-direction: column; }
+  #page-opensky.active { display: flex; }
+
+  .opensky-header {
+    padding: 6px 10px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid rgba(0,200,255,0.1);
+    background: var(--bg2);
+  }
+
+  .opensky-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 9px;
+    color: var(--blue);
+    letter-spacing: 2px;
+  }
+
+  .refresh-btn {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 8px;
+    color: var(--amber);
+    cursor: pointer;
+    padding: 2px 6px;
+    border: 1px solid rgba(245,166,35,0.3);
+    border-radius: 2px;
+  }
+
+  .opensky-list {
+    flex: 1; overflow-y: auto; scrollbar-width: none;
+  }
+
+  .opensky-row {
+    display: grid;
+    grid-template-columns: 72px 30px 54px 54px 54px 1fr;
+    align-items: center;
+    padding: 5px 10px;
+    border-bottom: 1px solid rgba(0,200,255,0.05);
+    gap: 4px;
+  }
+
+  /* ===== STATUS PAGE ===== */
+  #page-status { display: none; padding: 10px 12px; }
+  #page-status.active { display: block; }
+
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .status-card {
+    background: var(--bg3);
+    border: 1px solid rgba(0,200,255,0.1);
+    border-radius: 3px;
+    padding: 8px;
+  }
+
+  .status-label {
+    font-family: 'Orbitron', monospace;
+    font-size: 7px;
+    color: var(--dim);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .status-value {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: var(--amber);
+    word-break: break-all;
+  }
+
+  .status-value.small { font-size: 10px; }
+  .status-value.xsmall { font-size: 8px; letter-spacing: 0; }
+  .status-value.ok { color: var(--green); }
+  .status-value.warn { color: var(--red); }
+
+  .status-full {
+    margin-top: 6px;
+    background: var(--bg3);
+    border: 1px solid rgba(0,200,255,0.1);
+    border-radius: 3px;
+    padding: 8px;
+  }
+
+  /* ===== SETUP PAGE ===== */
+  #page-setup { display: none; }
+  #page-setup.active { display: flex; flex-direction: column; }
+
+  .setup-tabs {
+    display: flex;
+    border-bottom: 1px solid rgba(0,200,255,0.1);
+    background: var(--bg2);
+  }
+
+  .setup-tab {
+    flex: 1; padding: 6px 4px;
+    font-family: 'Orbitron', monospace;
+    font-size: 7px;
+    color: var(--dim);
+    text-align: center;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    border-right: 1px solid rgba(0,200,255,0.06);
+  }
+
+  .setup-tab.active {
+    color: var(--amber);
+    background: rgba(245,166,35,0.06);
+    border-bottom: 2px solid var(--amber);
+  }
+
+  .setup-content { flex: 1; overflow-y: auto; padding: 4px 8px; scrollbar-width: none; }
+
+  .qr-section {
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+
+  .qr-box {
+    width: 80px; height: 80px;
+    background: white;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .qr-box canvas { width: 74px !important; height: 74px !important; }
+
+  .qr-info { flex: 1; }
+
+  .qr-info h3 {
+    font-family: 'Orbitron', monospace;
+    font-size: 9px;
+    color: var(--amber);
+    letter-spacing: 1px;
+    margin-bottom: 5px;
+  }
+
+  .qr-info p {
+    font-size: 10px;
+    color: var(--text);
+    line-height: 1.4;
+    margin-bottom: 4px;
+  }
+
+  .step-list { margin-top: 8px; }
+
+  .step {
+    display: flex; gap: 8px; align-items: flex-start;
+    margin-bottom: 6px;
+  }
+
+  .step-num {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--amber2);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Orbitron', monospace;
+    font-size: 8px; font-weight: 900;
+    color: white; flex-shrink: 0;
+  }
+
+  .step-text { font-size: 10px; color: var(--text); line-height: 1.4; }
+  .step-text strong { color: var(--amber); }
+
+  .antenna-diagram {
+    margin-top: 8px;
+    background: var(--bg3);
+    border: 1px solid rgba(0,200,255,0.1);
+    border-radius: 3px;
+    padding: 8px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--blue);
+    line-height: 1.6;
+  }
+
+  /* ===== RESET PAGE ===== */
+  #page-reset { display: none; align-items: center; justify-content: center; flex-direction: column; gap: 12px; }
+  #page-reset.active { display: flex; }
+
+  .reset-warning {
+    font-family: 'Orbitron', monospace;
+    font-size: 10px;
+    color: var(--red);
+    letter-spacing: 2px;
+    text-align: center;
+  }
+
+  .reset-text {
+    font-size: 11px;
+    color: var(--dim);
+    text-align: center;
+    max-width: 300px;
+    line-height: 1.5;
+  }
+
+  .reset-btn {
+    padding: 10px 24px;
+    background: rgba(255,59,92,0.1);
+    border: 1px solid var(--red);
+    border-radius: 3px;
+    font-family: 'Orbitron', monospace;
+    font-size: 9px;
+    color: var(--red);
+    cursor: pointer;
+    letter-spacing: 2px;
+  }
+
+  .reset-btn:active { background: rgba(255,59,92,0.25); }
+
+  /* ===== LOADING ===== */
+  .loading {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; flex-direction: column; gap: 8px;
+  }
+
+  .loading-text {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--dim);
+    animation: blink 1s infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
+
+  .spinner {
+    width: 24px; height: 24px;
+    border: 2px solid rgba(0,200,255,0.1);
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ===== SDR UNPLUGGED ALERT — overlays every tab, not just STATUS ===== */
+  .sdr-alert-banner {
+    display: none;
+    position: absolute; top: 0; left: 0; right: 0;
+    z-index: 1100;
+    background: var(--red);
+    color: #fff;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    text-align: center;
+    padding: 6px 10px;
+    font-size: 12px;
+    letter-spacing: 0.3px;
+    box-shadow: 0 2px 10px rgba(255,59,92,0.6);
+    animation: sdrAlertPulse 1.4s ease-in-out infinite;
+  }
+  .sdr-alert-banner.show { display: block; }
+  @keyframes sdrAlertPulse {
+    0%, 100% { background: var(--red); }
+    50% { background: #b3122b; }
+  }
+
+  /* ===== AIRCRAFT DETAIL PANEL ===== */
+  .ac-detail {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    height: 80px;
+    background: linear-gradient(0deg, var(--bg) 0%, rgba(8,12,16,0.95) 100%);
+    border-top: 1px solid rgba(245,166,35,0.3);
+    padding: 8px 12px;
+    display: none;
+    z-index: 10;
+  }
+
+  .ac-detail.show { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; }
+
+  .ac-detail-item .label {
+    font-family: 'Orbitron', monospace;
+    font-size: 6px;
+    color: var(--dim);
+    letter-spacing: 1px;
+    margin-bottom: 2px;
+  }
+
+  .ac-detail-item .value {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    color: var(--amber);
+  }
+
+  .ac-detail-item .value.big { font-size: 18px; }
+
+  /* Leaflet dark overrides */
+  .leaflet-container { background: #0d1520; font-family: 'Rajdhani', sans-serif; }
+  .leaflet-popup-content-wrapper { background: #0d1520; color: #c8d8e8; border: 1px solid rgba(245,166,35,0.4); border-radius: 3px; font-size: 10px; }
+  .leaflet-popup-tip { background: #0d1520; }
+  .leaflet-control-zoom a { background: #0d1520; color: #f5a623; border-color: rgba(0,200,255,0.2); }
+  .leaflet-tile-pane { filter: brightness(0.7) saturate(0.5); }
+
+  /* ===== ON-SCREEN KEYBOARD ===== */
+  .kb-row {
+    display: flex; justify-content: center; gap: 2px; margin-bottom: 3px;
+  }
+
+  .kb-key {
+    min-width: 42px; height: 24px;
+    background: var(--bg3);
+    border: 1px solid rgba(0,200,255,0.12);
+    border-radius: 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+    flex: 1;
+    max-width: 46px;
+  }
+
+  .kb-key:active { background: rgba(0,200,255,0.15); color: var(--blue); }
+  .kb-space { min-width: 120px; max-width: 160px; flex: 3; }
+  .kb-wide { font-size: 9px; color: var(--amber); }
+
+  /* ===== WIFI NETWORK LIST ===== */
+  .wifi-network {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 6px;
+    border-bottom: 1px solid rgba(0,200,255,0.05);
+    cursor: pointer;
+  }
+
+  .wifi-network:active { background: rgba(0,200,255,0.08); }
+  .wifi-ssid { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--text); }
+  .wifi-signal { font-size: 9px; color: var(--dim); }
+</style>
+</head>
+<body>
+<div class="screen">
+
+  <!-- SDR UNPLUGGED ALERT — shown on every tab until the dongle is detected again -->
+  <div class="sdr-alert-banner" id="sdr-alert-banner">
+    ⚠ SDR UNPLUGGED — please unplug the USB dongle and firmly plug it back in
+  </div>
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="topbar-logo">ADS<span>·</span>B <span>KIOSK</span></div>
+    <div class="topbar-stat">
+      <div class="dot" id="sdr-dot"></div>
+      <span id="sdr-status">SDR</span>
+    </div>
+    <div class="topbar-stat" style="margin-left:8px">
+      <div class="dot" id="wifi-dot"></div>
+      <span id="ac-count">0 AC</span>
+    </div>
+    <div class="topbar-stat" style="margin-left:8px; font-size:8px" id="clock"></div>
+  </div>
+
+  <!-- NAV BAR -->
+  <div class="navbar">
+    <div class="nav-btn active" id="nav-home" onclick="showPage('home')">
+      <span class="nav-icon">⌂</span><span>HOME</span>
+    </div>
+    <div class="nav-btn" id="nav-map" onclick="showPage('map')">
+      <span class="nav-icon">◉</span><span>MAP</span>
+    </div>
+    <div class="nav-btn" id="nav-hud" onclick="showPage('hud')">
+      <span class="nav-icon">✈</span><span>TRAFFIC</span>
+    </div>
+    <div class="nav-btn" id="nav-opensky" onclick="showPage('opensky')">
+      <span class="nav-icon">🌐</span><span>WIDE</span>
+    </div>
+    <div class="nav-btn" id="nav-status" onclick="showPage('status')">
+      <span class="nav-icon">◈</span><span>STATUS</span>
+    </div>
+    <div class="nav-btn" id="nav-setup" onclick="showPage('setup')">
+      <span class="nav-icon">⚙</span><span>SETUP</span>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+
+    <!-- HOME -->
+    <div class="page active" id="page-home">
+      <div class="home-card" onclick="showPage('map')">
+        <div class="card-icon">◉</div>
+        <div class="card-label">Live Map</div>
+        <div class="card-desc">Local radar<br>all aircraft</div>
+      </div>
+      <div class="home-card" onclick="showPage('hud')">
+        <div class="card-icon">✈</div>
+        <div class="card-label">Traffic HUD</div>
+        <div class="card-desc">Callsign · Alt<br>Speed · Distance</div>
+      </div>
+      <div class="home-card" onclick="showPage('opensky')">
+        <div class="card-icon">🌐</div>
+        <div class="card-label">Wide Area</div>
+        <div class="card-desc">OpenSky<br>regional feed</div>
+      </div>
+      <div class="home-card" onclick="showPage('status')">
+        <div class="card-icon">◈</div>
+        <div class="card-label">System</div>
+        <div class="card-desc">IP · WiFi<br>SDR status</div>
+      </div>
+      <div class="home-card" onclick="showPage('setup')">
+        <div class="card-icon">⚙</div>
+        <div class="card-label">Setup</div>
+        <div class="card-desc">WiFi · SDR<br>Antenna guide</div>
+      </div>
+      <div class="home-card" onclick="showPage('reset')">
+        <div class="card-icon">↺</div>
+        <div class="card-label">Reset</div>
+        <div class="card-desc">Factory<br>reset device</div>
+      </div>
+    </div>
+
+    <!-- MAP -->
+    <div class="page" id="page-map">
+      <div id="live-map" style="width:100%;height:100%"></div>
+      <div class="map-overlay" onclick="refreshLiveMap()" style="cursor:pointer">↻ REFRESH</div>
+    </div>
+
+    <!-- HUD / TRAFFIC -->
+    <div class="page" id="page-hud">
+      <div class="hud-header">
+        <div class="hud-title">LIVE TRAFFIC</div>
+        <div class="hud-count">TRACKING <span id="hud-count">0</span> AIRCRAFT</div>
+      </div>
+      <div class="hud-col-headers">
+        <span>CALLSIGN</span>
+        <span>HDG</span>
+        <span>DIST</span>
+        <span>ALT</span>
+        <span>SPD</span>
+        <span>FLIGHT</span>
+      </div>
+      <div class="hud-list" id="hud-list">
+        <div class="loading">
+          <div class="spinner"></div>
+          <div class="loading-text">AWAITING DATA...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OPENSKY WIDE AREA -->
+    <div class="page" id="page-opensky">
+      <div class="opensky-header">
+        <div class="opensky-title">WIDE AREA · OPENSKY</div>
+        <div style="display:flex;gap:4px;align-items:center">
+          <div id="opensky-view-btn" onclick="toggleOpenSkyView()" style="padding:2px 6px;background:rgba(0,200,255,0.1);border:1px solid var(--blue);border-radius:3px;font-family:'Orbitron',monospace;font-size:7px;color:var(--blue);cursor:pointer">MAP</div>
+          <div class="refresh-btn" onclick="loadOpenSky()">↻</div>
+        </div>
+      </div>
+      <!-- LIST VIEW -->
+      <div id="opensky-list-view" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+        <div class="hud-col-headers">
+          <span>CALLSIGN</span>
+          <span>HDG</span>
+          <span>DIST</span>
+          <span>ALT</span>
+          <span>SPD</span>
+          <span>ORIGIN</span>
+        </div>
+        <div class="opensky-list" id="opensky-list">
+          <div class="loading">
+            <div class="spinner"></div>
+            <div class="loading-text">LOADING OPENSKY...</div>
+          </div>
+        </div>
+      </div>
+      <!-- MAP VIEW -->
+      <div id="opensky-map-view" style="display:none;flex:1;position:relative">
+        <div id="opensky-map" style="width:100%;height:100%"></div>
+      </div>
+    </div>
+
+    <!-- STATUS -->
+    <div class="page" id="page-status" style="padding:6px 10px;overflow-y:auto">
+      <div class="status-grid" style="gap:4px;margin-bottom:4px">
+        <div class="status-card" style="padding:5px 7px">
+          <div class="status-label">Local IP</div>
+          <div class="status-value small" id="stat-ip">—</div>
+        </div>
+        <div class="status-card" style="padding:5px 7px">
+          <div class="status-label">Network</div>
+          <div class="status-value small" id="stat-wifi">—</div>
+        </div>
+        <div class="status-card" style="padding:5px 7px">
+          <div class="status-label">SDR Dongle</div>
+          <div class="status-value" id="stat-sdr">—</div>
+        </div>
+        <div class="status-card" style="padding:5px 7px">
+          <div class="status-label">Aircraft Now</div>
+          <div class="status-value ok" id="stat-ac">—</div>
+        </div>
+      </div>
+      <div class="status-full" style="padding:5px 7px;margin-bottom:4px">
+        <div class="status-label">ADS-B Feeder</div>
+        <div class="status-value small ok" id="stat-feeder">http://localhost:1099</div>
+      </div>
+      <div class="status-full" style="padding:5px 7px;margin-bottom:4px">
+        <div class="status-label">Antenna Location</div>
+        <div class="status-value small" id="stat-location">—</div>
+      </div>
+      <div class="status-full" style="padding:5px 7px">
+        <div class="status-label">Coordinates</div>
+        <div class="status-value xsmall" id="stat-coords">—</div>
+      </div>
+    </div>
+
+    <!-- SETUP -->
+    <div class="page" id="page-setup">
+      <div class="setup-tabs">
+        <div class="setup-tab active" id="tab-wifi" onclick="showSetupTab('wifi')">WIFI</div>
+        <div class="setup-tab" id="tab-sdr" onclick="showSetupTab('sdr')">SDR</div>
+        <div class="setup-tab" id="tab-antenna" onclick="showSetupTab('antenna')">ANTENNA</div>
+        <div class="setup-tab" id="tab-fr24" onclick="showSetupTab('fr24')">FR24</div>
+        <div class="setup-tab" id="tab-display" onclick="showSetupTab('display')">DISPLAY</div>
+      </div>
+      <div class="setup-content" id="setup-content">
+        <!-- content injected by JS -->
+      </div>
+    </div>
+
+    <!-- RESET -->
+    <div class="page" id="page-reset">
+      <div class="reset-warning">⚠ FACTORY RESET</div>
+      <div class="reset-text">This will wipe all settings and return the device to factory defaults. This cannot be undone.</div>
+      <div class="reset-btn" onclick="confirmReset()">HOLD TO RESET</div>
+      <div style="margin-top:10px;display:flex;gap:8px;justify-content:center">
+        <div style="padding:8px 16px;background:rgba(0,200,255,0.08);border:1px solid var(--blue);border-radius:3px;font-family:'Orbitron',monospace;font-size:8px;color:var(--blue);cursor:pointer" onclick="confirmReboot()">↺ REBOOT</div>
+        <div style="padding:8px 16px;background:rgba(0,255,136,0.08);border:1px solid var(--green);border-radius:3px;font-family:'Orbitron',monospace;font-size:8px;color:var(--green);cursor:pointer" onclick="restartFeeder()">⟳ RESTART SDR</div>
+        <div style="padding:8px 16px;background:rgba(255,59,92,0.08);border:1px solid var(--red);border-radius:3px;font-family:'Orbitron',monospace;font-size:8px;color:var(--red);cursor:pointer" onclick="confirmShutdown()">⏻ SHUTDOWN</div>
+      </div>
+      <div id="reset-status" style="margin-top:8px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);text-align:center"></div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /screen -->
+
+<script>
+// ===== CONFIG =====
+let LAT = 51.5074;
+let LON = -0.1278;
+const FEEDER_URL = 'http://localhost:1090';
+const REFRESH_HUD = 5000;
+const REFRESH_STATUS = 10000;
+
+// ===== DISPLAY ALIGNMENT (compensate for a physically off-center bezel/panel mount) =====
+// Persisted server-side via the Flask backend, NOT localStorage — kiosk.service wipes the
+// Chromium profile dir (/tmp/chromium) on every launch, so localStorage never survives a
+// reboot. localStorage is still used as an instant local cache to avoid a flash of
+// unaligned content while the backend fetch is in flight.
+let currentAlign = {x:0,y:0};
+function loadAlignCache() {
+  try { return JSON.parse(localStorage.getItem('displayAlign')) || {x:0,y:0}; }
+  catch(e) { return {x:0,y:0}; }
+}
+function applyAlign(a) {
+  currentAlign = a;
+  document.querySelector('.screen').style.transform = `translate(${a.x}px, ${a.y}px)`;
+  localStorage.setItem('displayAlign', JSON.stringify(a));
+  const el = document.getElementById('stat-align');
+  if (el) el.textContent = `${a.x}, ${a.y}`;
+}
+function nudgeDisplay(dx, dy, reset) {
+  const a = reset ? {x:0,y:0} : {x: currentAlign.x + dx, y: currentAlign.y + dy};
+  applyAlign(a);
+  fetch('http://localhost:5000/system/display-align', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(a)
+  }).catch(() => {});
+}
+applyAlign(loadAlignCache());
+fetch('http://localhost:5000/system/display-align')
+  .then(r => r.json()).then(a => applyAlign(a)).catch(() => {});
+
+// ===== LIVE MAP (Leaflet) =====
+let liveMap = null;
+let liveMarkers = {};
+let liveMapInitialized = false;
+
+function initLiveMap() {
+  if (liveMapInitialized) return;
+  liveMapInitialized = true;
+
+  liveMap = L.map('live-map', {
+    zoomControl: false,
+    attributionControl: false
+  }).setView([LAT, LON], 10);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 14,
+    keepBuffer: 2
+  }).addTo(liveMap);
+
+  L.control.zoom({ position: 'bottomright' }).addTo(liveMap);
+
+  // Home marker
+  L.circleMarker([LAT, LON], {
+    radius: 5, color: '#f5a623', fillColor: '#f5a623',
+    fillOpacity: 1, weight: 2
+  }).addTo(liveMap);
+}
+
+async function refreshLiveMap() {
+  if (!liveMap) { initLiveMap(); await new Promise(r => setTimeout(r, 500)); }
+  try {
+    const res = await fetch('http://localhost:1090/data/aircraft.json');
+    const data = await res.json();
+    const aircraft = (data.aircraft || []).filter(a => a.lat && a.lon);
+
+    // Remove stale markers
+    const current = new Set(aircraft.map(a => a.hex));
+    Object.keys(liveMarkers).forEach(hex => {
+      if (!current.has(hex)) {
+        liveMap.removeLayer(liveMarkers[hex]);
+        delete liveMarkers[hex];
+      }
+    });
+
+    // Add/update markers
+    aircraft.forEach(a => {
+      const arrow = bearing2arrow(a.track);
+      const alt = a.alt_baro || 0;
+      const color = alt > 30000 ? '#00c8ff' : alt > 10000 ? '#00ff88' : alt > 3000 ? '#f5a623' : '#ff3b5c';
+    const isHelo = a.t && (a.t.startsWith('H') || a.t === 'BALL' || a.t === 'ULAC');
+    const symbol = isHelo ? '🚁' : '✈';
+    const rotation = isHelo ? 0 : (a.track || 0);
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="color:${color};font-size:15px;text-shadow:0 0 3px black;line-height:1;transform:rotate(${rotation}deg)">${symbol}</div>`,
+      iconSize: [16, 16], iconAnchor: [8, 8]
+    });
+      const callsign = (a.flight || a.hex || '').trim();
+      const popup = `<b style="color:#f5a623">${callsign}</b><br>` +
+        `Alt: ${alt ? Math.round(alt).toLocaleString() + ' ft' : '—'}<br>` +
+        `Spd: ${a.gs ? Math.round(a.gs) + ' kt' : '—'}`;
+
+      if (liveMarkers[a.hex]) {
+        liveMarkers[a.hex].setLatLng([a.lat, a.lon]).setIcon(icon);
+      } else {
+        liveMarkers[a.hex] = L.marker([a.lat, a.lon], {icon})
+          .bindPopup(popup, {className: 'ac-popup'})
+          .addTo(liveMap);
+      }
+    });
+
+    document.getElementById('ac-count').textContent = aircraft.length + ' AC';
+  } catch(e) {
+    console.log('Map refresh error:', e);
+  }
+}
+
+function reloadMap() { refreshLiveMap(); }
+function checkMapLoaded() { if (liveMap) refreshLiveMap(); }
+
+// Load location from feeder config
+async function loadLocation() {
+  try {
+    const res = await fetch('http://localhost:5000/feeder/location');
+    const data = await res.json();
+    LAT = data.lat;
+    LON = data.lon;
+  } catch(e) {
+    // keep defaults
+  }
+}
+loadLocation();
+
+// ===== NAVIGATION =====
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  const navBtn = document.getElementById('nav-' + name);
+  if (navBtn) navBtn.classList.add('active');
+  if (name === 'hud') loadHUD();
+  if (name === 'opensky') loadOpenSky();
+  if (name === 'status') loadStatus();
+  if (name === 'setup') showSetupTab('wifi');
+  if (name === 'map') {
+    setTimeout(() => {
+      initLiveMap();
+      refreshLiveMap();
+    }, 300);
+  }
+}
+
+// ===== CLOCK =====
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const s = String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clock').textContent = h + ':' + m + ':' + s;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ===== DIRECTION ARROW =====
+function bearing2arrow(track) {
+  if (track === null || track === undefined) return '·';
+  const arrows = ['↑','↗','→','↘','↓','↙','←','↖'];
+  return arrows[Math.round(track / 45) % 8];
+}
+
+// ===== DISTANCE =====
+function calcDist(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))).toFixed(1);
+}
+
+// ===== HUD DATA =====
+async function loadHUD() {
+  try {
+    const res = await fetch(FEEDER_URL + '/data/aircraft.json');
+    const data = await res.json();
+    renderHUD(data.aircraft || []);
+  } catch(e) {
+    document.getElementById('hud-list').innerHTML =
+      '<div class="loading"><div class="loading-text">NO DATA — IS SDR CONNECTED?</div></div>';
+  }
+}
+
+function renderHUD(aircraft) {
+  // Filter: has position
+  let ac = aircraft.filter(a => a.lat && a.lon);
+
+  // Add distance
+  ac = ac.map(a => ({
+    ...a,
+    _dist: parseFloat(calcDist(LAT, LON, a.lat, a.lon))
+  }));
+
+  // Sort by distance
+  ac.sort((a, b) => a._dist - b._dist);
+
+  document.getElementById('hud-count').textContent = ac.length;
+  document.getElementById('ac-count').textContent = ac.length + ' AC';
+
+  if (ac.length === 0) {
+    document.getElementById('hud-list').innerHTML =
+      '<div class="loading"><div class="loading-text">NO AIRCRAFT IN RANGE</div></div>';
+    return;
+  }
+
+  const html = ac.slice(0, 40).map(a => {
+    const callsign = (a.flight || a.hex || '??????').trim();
+    const arrow = bearing2arrow(a.track);
+    const dist = a._dist + ' km';
+    const alt = a.alt_baro ? Math.round(a.alt_baro).toLocaleString() + ' ft' : '—';
+    const spd = a.gs ? Math.round(a.gs) + ' kt' : '—';
+    const extra = a.r || a.t || '';
+    return `<div class="aircraft-row" onclick="selectAircraft(this)">
+      <div class="ac-callsign">${callsign}</div>
+      <div class="ac-dir">${arrow}</div>
+      <div class="ac-val">${dist}<span class="unit">DIST</span></div>
+      <div class="ac-val">${alt}<span class="unit">ALT</span></div>
+      <div class="ac-val">${spd}<span class="unit">SPD</span></div>
+      <div class="ac-flag">${extra}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('hud-list').innerHTML = html;
+}
+
+function selectAircraft(el) {
+  document.querySelectorAll('.aircraft-row').forEach(r => r.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+// ===== OPENSKY MAP TOGGLE =====
+let openskyMapMode = false;
+let leafletMap = null;
+let leafletMarkers = [];
+let cachedOpenSkyData = [];
+
+function toggleOpenSkyView() {
+  openskyMapMode = !openskyMapMode;
+  const listView = document.getElementById('opensky-list-view');
+  const mapView = document.getElementById('opensky-map-view');
+  const btn = document.getElementById('opensky-view-btn');
+
+  if (openskyMapMode) {
+    listView.style.display = 'none';
+    mapView.style.display = 'block';
+    btn.textContent = 'LIST';
+    initOpenSkyMap();
+  } else {
+    listView.style.display = 'flex';
+    mapView.style.display = 'none';
+    btn.textContent = 'MAP';
+  }
+}
+
+function initOpenSkyMap() {
+  if (!leafletMap) {
+    leafletMap = L.map('opensky-map', {
+      zoomControl: false,
+      attributionControl: false
+    }).setView([LAT, LON], 8);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 13
+    }).addTo(leafletMap);
+
+    // Add zoom control small
+    L.control.zoom({ position: 'bottomright' }).addTo(leafletMap);
+  } else {
+    leafletMap.invalidateSize();
+    leafletMap.setView([LAT, LON], 8);
+  }
+  renderOpenSkyMap(cachedOpenSkyData);
+}
+
+function renderOpenSkyMap(states) {
+  if (!leafletMap) return;
+
+  // Clear old markers
+  leafletMarkers.forEach(m => leafletMap.removeLayer(m));
+  leafletMarkers = [];
+
+  // Add home marker
+  const homeIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:8px;height:8px;background:#f5a623;border-radius:50%;border:2px solid white;box-shadow:0 0 6px #f5a623"></div>',
+    iconSize: [8, 8],
+    iconAnchor: [4, 4]
+  });
+  leafletMarkers.push(L.marker([LAT, LON], {icon: homeIcon}).addTo(leafletMap));
+
+  states.filter(s => s[6] && s[5] && !s[8]).forEach(s => {
+    const callsign = (s[1] || '').trim() || s[0];
+    const lat = s[6], lon = s[5];
+    const alt = s[7] ? Math.round(s[7] * 3.28084) : 0;
+    const spd = s[9] ? Math.round(s[9] * 1.944) : 0;
+    const track = s[10] || 0;
+    const dist = calcDist(LAT, LON, lat, lon);
+
+    const arrow = bearing2arrow(track);
+    const acIcon = L.divIcon({
+      className: '',
+      html: `<div style="color:#f5a623;font-size:14px;text-shadow:0 0 3px black;line-height:1">${arrow}</div>`,
+      iconSize: [14, 14],
+      iconAnchor: [7, 7]
+    });
+
+    const marker = L.marker([lat, lon], {icon: acIcon})
+      .bindPopup(`<b>${callsign}</b><br>${Math.round(dist)}km · ${alt.toLocaleString()}ft · ${spd}kt`, {
+        className: 'ac-popup'
+      })
+      .addTo(leafletMap);
+    leafletMarkers.push(marker);
+  });
+}
+async function loadOpenSky() {
+  const list = document.getElementById('opensky-list');
+  list.innerHTML = '<div class="loading"><div class="spinner"></div><div class="loading-text">LOADING OPENSKY...</div></div>';
+
+  // Bounding box around SE London ~100km radius
+  const lamin = LAT - 0.9, lomin = LON - 1.3;
+  const lamax = LAT + 0.9, lomax = LON + 1.3;
+
+  try {
+    const res = await fetch(`http://localhost:5000/opensky?lat=${LAT}&lon=${LON}`);
+    const data = await res.json();
+    renderOpenSky(data.states || []);
+  } catch(e) {
+    list.innerHTML = '<div class="loading"><div class="loading-text">OPENSKY UNAVAILABLE</div></div>';
+  }
+}
+
+function renderOpenSky(states) {
+  cachedOpenSkyData = states;
+  if (openskyMapMode) { renderOpenSkyMap(states); return; }
+  if (!states.length) {
+    document.getElementById('opensky-list').innerHTML =
+      '<div class="loading"><div class="loading-text">NO AIRCRAFT IN REGION</div></div>';
+    return;
+  }
+
+  // States: [icao24, callsign, origin_country, time_position, last_contact,
+  //          lon, lat, baro_altitude, on_ground, velocity, true_track, ...]
+  let ac = states
+    .filter(s => s[6] && s[5] && !s[8]) // has lat/lon, not on ground
+    .map(s => ({
+      hex: s[0],
+      callsign: (s[1] || '').trim() || s[0],
+      country: s[2] || '',
+      lon: s[5], lat: s[6],
+      alt: s[7] ? Math.round(s[7] * 3.28084) : null,
+      spd: s[9] ? Math.round(s[9] * 1.944) : null,
+      track: s[10],
+      _dist: parseFloat(calcDist(LAT, LON, s[6], s[5]))
+    }));
+
+  ac.sort((a, b) => a._dist - b._dist);
+
+  const html = ac.slice(0, 40).map(a => {
+    const arrow = bearing2arrow(a.track);
+    const dist = a._dist + ' km';
+    const alt = a.alt ? a.alt.toLocaleString() + ' ft' : '—';
+    const spd = a.spd ? a.spd + ' kt' : '—';
+    return `<div class="aircraft-row">
+      <div class="ac-callsign">${a.callsign}</div>
+      <div class="ac-dir">${arrow}</div>
+      <div class="ac-val">${dist}<span class="unit">DIST</span></div>
+      <div class="ac-val">${alt}<span class="unit">ALT</span></div>
+      <div class="ac-val">${spd}<span class="unit">SPD</span></div>
+      <div class="ac-flag">${a.country}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('opensky-list').innerHTML = html;
+}
+
+// ===== STATUS =====
+// SDR indicator is 3-state, based on real hardware/feeder checks (not just aircraft data):
+//   RED    - dongle not detected on USB at all
+//   YELLOW - dongle detected, but not uploading (feeder not running, or running with no data yet)
+//   GREEN  - dongle detected AND actively uploading aircraft data
+async function loadStatus() {
+  let detected = false, feederRunning = false, receiving = false, count = 0;
+
+  try {
+    const sdrRes = await fetch('http://localhost:5000/system/sdr-status');
+    const sdr = await sdrRes.json();
+    detected = !!sdr.detected;
+    feederRunning = !!sdr.feeder_running;
+  } catch(e) {}
+
+  try {
+    const res = await fetch(FEEDER_URL + '/data/aircraft.json');
+    const data = await res.json();
+    count = (data.aircraft || []).filter(a => a.lat).length;
+    receiving = true;
+  } catch(e) {}
+
+  const dot = document.getElementById('sdr-dot');
+  const stat = document.getElementById('stat-sdr');
+  const acEl = document.getElementById('stat-ac');
+  dot.classList.remove('off', 'red', 'yellow');
+
+  if (!detected) {
+    stat.textContent = 'NOT DETECTED';
+    stat.className = 'status-value warn';
+    dot.classList.add('red');
+  } else if (!feederRunning || !receiving) {
+    stat.textContent = feederRunning ? 'NO UPLOAD' : 'PLUGGED IN';
+    stat.className = 'status-value warn';
+    dot.classList.add('yellow');
+  } else {
+    stat.textContent = 'UPLOADING';
+    stat.className = 'status-value ok';
+    dot.classList.remove('off');
+  }
+
+  if (receiving) {
+    acEl.textContent = count + ' aircraft';
+    acEl.className = 'status-value ok';
+  } else {
+    acEl.textContent = 'No data';
+    acEl.className = 'status-value warn';
+  }
+
+  // IP from Flask status endpoint
+  try {
+    const sres = await fetch('http://localhost:5000/system/status');
+    const sdata = await sres.json();
+    document.getElementById('stat-ip').textContent = sdata.ip || 'unknown';
+    document.getElementById('stat-wifi').textContent =
+      sdata.net_type === 'ethernet' ? 'Ethernet' : (sdata.ssid || 'unknown');
+    document.getElementById('stat-feeder').textContent = 'http://' + (sdata.ip || 'localhost') + ':1099';
+
+  // Load location and reverse geocode
+  try {
+    const lres = await fetch('http://localhost:5000/feeder/location');
+    const ldata = await lres.json();
+    document.getElementById('stat-coords').textContent = ldata.lat.toFixed(4) + '° N  ' + ldata.lon.toFixed(4) + '° E';
+    // Reverse geocode via nominatim
+    const gres = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${ldata.lat}&lon=${ldata.lon}&format=json`);
+    const gdata = await gres.json();
+    const loc = gdata.address ? (gdata.address.suburb || gdata.address.town || gdata.address.city || gdata.address.county || '') + ', ' + (gdata.address.country || '') : 'Unknown';
+    document.getElementById('stat-location').textContent = loc;
+  } catch(e) {
+    document.getElementById('stat-coords').textContent = LAT.toFixed(4) + ', ' + LON.toFixed(4);
+    document.getElementById('stat-location').textContent = 'lookup failed';
+  }
+  } catch(e) {
+    document.getElementById('stat-ip').textContent = location.hostname || 'localhost';
+    document.getElementById('stat-wifi').textContent = 'unknown';
+  }
+}
+
+// ===== SETUP TABS =====
+
+// On-screen keyboard state
+let kbTarget = null;
+let kbShift = false;
+
+function kbInput(char) {
+  if (!kbTarget) return;
+  if (char === '⌫') {
+    kbTarget.value = kbTarget.value.slice(0, -1);
+  } else if (char === '⇧') {
+    kbShift = !kbShift;
+    renderKb();
+    return;
+  } else if (char === '123' || char === 'ABC') {
+    kbTarget.dataset.mode = kbTarget.dataset.mode === 'num' ? 'alpha' : 'num';
+    renderKb();
+    return;
+  } else {
+    kbTarget.value += kbShift ? char.toUpperCase() : char;
+    if (kbShift) { kbShift = false; renderKb(); }
+  }
+  kbTarget.dispatchEvent(new Event('input'));
+}
+
+function renderKb() {
+  const kb = document.getElementById('onscreen-kb');
+  if (!kb) return;
+  const mode = kbTarget && kbTarget.dataset.mode === 'num' ? 'num' : 'alpha';
+  const rows = mode === 'num'
+    ? [['1','2','3','4','5','6','7','8','9','0'],
+       ['!','@','#','$','%','^','&','*','(',')'],
+       ['ABC','-','_','.','⌫']]
+    : [['q','w','e','r','t','y','u','i','o','p'],
+       ['a','s','d','f','g','h','j','k','l','⌫'],
+       ['z','x','c','v','b','n','m','⇧'],
+       ['123',' ','⌫']];
+
+  kb.innerHTML = rows.map(row =>
+    `<div class="kb-row">${row.map(k => {
+      const display = (k !== '⌫' && k !== '⇧' && k !== '123' && k !== 'ABC' && k !== ' ')
+        ? (kbShift ? k.toUpperCase() : k) : k;
+      const wide = (k === ' ') ? ' kb-space' : (k === '123' || k === 'ABC') ? ' kb-wide' : '';
+      return `<div class="kb-key${wide}" onclick="kbInput('${k}')">${display === ' ' ? '&nbsp;' : display}</div>`;
+    }).join('')}</div>`
+  ).join('');
+}
+
+function focusKbField(el) {
+  kbTarget = el;
+  if (!el.dataset.mode) el.dataset.mode = 'alpha';
+  renderKb();
+}
+
+async function wifiScan() {
+  const list = document.getElementById('wifi-network-list');
+  list.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px">Scanning...</div>';
+  try {
+    const res = await fetch('http://localhost:5000/wifi/scan');
+    const data = await res.json();
+    if (data.networks && data.networks.length) {
+      list.innerHTML = data.networks.slice(0,6).map(n =>
+        `<div class="wifi-network" onclick="selectNetwork('${n.ssid.replace(/'/g,"\\'")}')">
+          <span class="wifi-ssid">${n.ssid}</span>
+          <span class="wifi-signal">${n.signal}%</span>
+        </div>`
+      ).join('');
+    } else {
+      list.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px">No networks found</div>';
+    }
+  } catch(e) {
+    list.innerHTML = '<div style="color:var(--red);font-size:10px;padding:4px">Scan failed</div>';
+  }
+}
+
+function selectNetwork(ssid) {
+  const input = document.getElementById('wifi-ssid-input');
+  if (input) { input.value = ssid; focusKbField(document.getElementById('wifi-pass-input')); }
+}
+
+function friendlyWifiError(raw) {
+  const e = (raw || '').toLowerCase();
+  if (e.includes('key-mgmt') || e.includes('secrets were required') ||
+      e.includes('no secrets') || e.includes('802-11-wireless-security') ||
+      e.includes('password'))
+    return 'Wrong password — try again';
+  if (e.includes('no network with ssid') || e.includes('not found') ||
+      e.includes('no suitable'))
+    return 'Network not found — tap SCAN';
+  if (e.includes('timeout') || e.includes('timed out'))
+    return 'Timed out — check password & signal';
+  return "Couldn't connect — check password";
+}
+
+async function wifiConnect() {
+  const ssid = document.getElementById('wifi-ssid-input').value.trim();
+  const pass = document.getElementById('wifi-pass-input').value.trim();
+  const status = document.getElementById('wifi-connect-status');
+  const clearSoon = () => setTimeout(() => {
+    status.textContent = ''; status.style.color = 'var(--dim)';
+  }, 5000);
+  if (!ssid) { status.textContent = 'Enter a network name'; status.style.color = 'var(--red)'; clearSoon(); return; }
+  status.textContent = 'Connecting...'; status.style.color = 'var(--amber)';
+  try {
+    const res = await fetch('http://localhost:5000/wifi/connect', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ssid, password: pass})
+    });
+    const data = await res.json();
+    if (data.success) {
+      status.textContent = 'Connected! Rebooting...'; status.style.color = 'var(--green)';
+    } else {
+      status.textContent = friendlyWifiError(data.error); status.style.color = 'var(--red)'; clearSoon();
+    }
+  } catch(e) {
+    status.textContent = 'Error connecting'; status.style.color = 'var(--red)'; clearSoon();
+  }
+}
+
+const setupContent = {
+  wifi: `<div id="wifi-setup" style="height:210px;display:flex;flex-direction:column;gap:3px">
+    <div style="display:flex;gap:4px;align-items:stretch;height:72px">
+      <div id="wifi-network-list" style="flex:1;overflow-y:auto;background:var(--bg3);border:1px solid rgba(0,200,255,0.1);border-radius:3px;scrollbar-width:none">
+        <div style="color:var(--dim);font-size:10px;padding:4px">Tap SCAN to find networks</div>
+      </div>
+      <div onclick="wifiScan()" style="padding:4px 6px;background:rgba(0,200,255,0.1);border:1px solid var(--blue);border-radius:3px;font-family:'Orbitron',monospace;font-size:7px;color:var(--blue);cursor:pointer;writing-mode:vertical-rl;text-orientation:mixed;display:flex;align-items:center;justify-content:center">↻ SCAN</div>
+    </div>
+    <div style="display:flex;gap:4px;align-items:center">
+      <input id="wifi-ssid-input" type="text" placeholder="Network" readonly
+        style="flex:1;background:var(--bg3);border:1px solid rgba(0,200,255,0.15);color:var(--amber);padding:3px 5px;font-family:'Share Tech Mono',monospace;font-size:10px;border-radius:2px"
+        onclick="focusKbField(this)">
+      <input id="wifi-pass-input" type="text" placeholder="Password" readonly
+        style="flex:1;background:var(--bg3);border:1px solid rgba(0,200,255,0.15);color:var(--text);padding:3px 5px;font-family:'Share Tech Mono',monospace;font-size:10px;border-radius:2px"
+        onclick="focusKbField(this)">
+      <div onclick="wifiConnect()" style="padding:3px 8px;background:rgba(245,166,35,0.15);border:1px solid var(--amber);border-radius:3px;font-family:'Orbitron',monospace;font-size:7px;color:var(--amber);cursor:pointer;white-space:nowrap">GO</div>
+    </div>
+    <div id="wifi-connect-status" style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);height:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis"></div>
+    <div id="onscreen-kb" style="background:var(--bg2);border-top:1px solid rgba(0,200,255,0.1);padding:1px;flex:1"></div>
+  </div>`,
+
+  sdr: `<div class="step-list">
+    <div class="step"><div class="step-num">1</div><div class="step-text">Plug the <strong>RTL-SDR USB dongle</strong> into any USB port on the Pi</div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-text">Screw the <strong>antenna</strong> onto the silver SMA connector on the dongle — turn clockwise until hand-tight</div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-text">Stand the antenna <strong>upright and vertical</strong> — place it as high as possible, ideally near a window or outside</div></div>
+    <div class="step"><div class="step-num">4</div><div class="step-text">Keep away from <strong>metal objects, TVs and routers</strong> — they block the signal</div></div>
+    <div class="step"><div class="step-num">5</div><div class="step-text">Aircraft should appear on the <strong>Traffic</strong> and <strong>Map</strong> pages within 1-2 minutes</div></div>
+    <div class="step"><div class="step-num">6</div><div class="step-text">To configure your location and FlightRadar24, visit <strong id="sdr-feeder-url">http://[ip]:1099</strong> on your phone</div></div>
+  </div>`,
+
+  antenna: `<div class="step-list">
+    <div class="step"><div class="step-num">1</div><div class="step-text">Your RTL-SDR dongle includes a <strong>telescopic antenna on a magnetic base</strong> — no tools needed</div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-text">Extend the antenna to exactly <strong>6.9cm (2.7 inches)</strong> — this tunes it to 1090 MHz for ADS-B</div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-text">Stand it <strong>fully vertical</strong> — the magnetic base can stick to any metal surface like a fridge or window frame</div></div>
+    <div class="step"><div class="step-num">4</div><div class="step-text">Place as <strong>high as possible</strong> — near a window, in a loft, or outside gives the best range</div></div>
+    <div class="step"><div class="step-num">5</div><div class="step-text">Keep away from <strong>metal objects, TVs and routers</strong> — they block the 1090 MHz signal</div></div>
+  </div>
+  <div class="antenna-diagram" style="margin-top:6px">
+  Extend to 6.9cm = 1090 MHz tuned
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↑ vertical    higher = more range
+  6.9cm         window/loft = ideal
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  </div>`,
+
+  fr24: `<div class="step-list">
+    <div class="step"><div class="step-num">1</div><div class="step-text">On your phone or PC, open <strong id="fr24-feeder-url">http://[ip]:1099</strong></div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-text">Click <strong>Data Sharing</strong> in the top menu and enable <strong>FlightRadar24</strong></div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-text">If you already have an FR24 account, paste your <strong>existing sharing key</strong> to keep your stats and history</div></div>
+    <div class="step"><div class="step-num">4</div><div class="step-text">If you don't have an account, create one free at <strong>flightradar24.com</strong> — feeders get a <strong>free Business subscription</strong></div></div>
+    <div class="step"><div class="step-num">5</div><div class="step-text">Your feeder will appear on the FR24 coverage map within <strong>24 hours</strong> of first data</div></div>
+  </div>`,
+
+  display: `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:210px;gap:8px">
+    <div style="color:var(--dim);font-size:10px;text-align:center;max-width:260px">If the screen content looks shifted or cut off against the bezel, nudge it here.</div>
+    <div style="display:grid;grid-template-columns:28px 28px 28px;grid-template-rows:28px 28px 28px;gap:3px">
+      <div></div>
+      <div class="align-btn" onclick="nudgeDisplay(0,-1)">&#9650;</div>
+      <div></div>
+      <div class="align-btn" onclick="nudgeDisplay(-1,0)">&#9664;</div>
+      <div class="align-btn" onclick="nudgeDisplay(0,0,true)" style="font-size:9px">RST</div>
+      <div class="align-btn" onclick="nudgeDisplay(1,0)">&#9654;</div>
+      <div></div>
+      <div class="align-btn" onclick="nudgeDisplay(0,1)">&#9660;</div>
+      <div></div>
+    </div>
+    <div class="status-value xsmall" id="stat-align">0, 0</div>
+  </div>`
+};
+
+function showSetupTab(tab) {
+  document.querySelectorAll('.setup-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.getElementById('setup-content').innerHTML = setupContent[tab];
+
+  if (tab === 'wifi') {
+    kbTarget = document.getElementById('wifi-ssid-input');
+    if (kbTarget) { kbTarget.dataset.mode = 'alpha'; renderKb(); }
+  }
+
+  // Inject real IP into SDR and FR24 instructions
+  if (tab === 'sdr' || tab === 'fr24') {
+    fetch('http://localhost:5000/system/status')
+      .then(r => r.json())
+      .then(d => {
+        const ip = d.ip || 'your-pi-ip';
+        const url = 'http://' + ip + ':1099';
+        const el = document.getElementById(tab === 'sdr' ? 'sdr-feeder-url' : 'fr24-feeder-url');
+        if (el) { el.textContent = url; el.style.color = 'var(--amber)'; }
+      }).catch(() => {});
+  }
+
+  if (tab === 'display') applyAlign(currentAlign);
+}
+
+// ===== RESET =====
+let resetTimer = null;
+function confirmReset() {
+  const btn = document.querySelector('.reset-btn');
+  if (!resetTimer) {
+    btn.textContent = 'HOLD 3s TO CONFIRM...';
+    btn.style.borderColor = 'var(--red)';
+    resetTimer = setTimeout(async () => {
+      btn.textContent = 'RESETTING...';
+      try {
+        await fetch('http://localhost:5000/system/reset', {method:'POST'});
+        btn.textContent = 'RESET COMPLETE — REBOOTING';
+        btn.style.color = 'var(--green)';
+      } catch(e) {
+        btn.textContent = 'RESET FAILED';
+      }
+      resetTimer = null;
+    }, 3000);
+  }
+}
+
+async function confirmReboot() {
+  const status = document.getElementById('reset-status');
+  if (status) { status.textContent = 'Rebooting...'; status.style.color = 'var(--amber)'; }
+  try {
+    await fetch('http://localhost:5000/system/reboot', {method:'POST'});
+  } catch(e) {}
+}
+
+async function confirmShutdown() {
+  if (!confirm('Shut down the device? You will need to unplug and replug the power to turn it back on.')) return;
+  const status = document.getElementById('reset-status');
+  if (status) { status.textContent = 'Shutting down...'; status.style.color = 'var(--red)'; }
+  try {
+    await fetch('http://localhost:5000/system/shutdown', {method:'POST'});
+    let seconds = 20;
+    const tick = setInterval(() => {
+      seconds--;
+      if (status) status.textContent = `Shutting down — safe to unplug power in ${seconds}s`;
+      if (seconds <= 0) {
+        clearInterval(tick);
+        if (status) { status.textContent = 'Safe to unplug power now'; status.style.color = 'var(--green)'; }
+      }
+    }, 1000);
+  } catch(e) {
+    if (status) { status.textContent = 'Shutdown failed'; status.style.color = 'var(--red)'; }
+  }
+}
+
+async function restartFeeder() {
+  const status = document.getElementById('reset-status');
+  if (status) { status.textContent = 'Restarting SDR feeder...'; status.style.color = 'var(--blue)'; }
+  try {
+    const res = await fetch('http://localhost:5000/system/restart-feeder', {method:'POST'});
+    const data = await res.json();
+    if (status) { status.textContent = 'Feeder restarted — wait 30s for aircraft'; status.style.color = 'var(--green)'; }
+  } catch(e) {
+    if (status) { status.textContent = 'Failed to restart feeder'; status.style.color = 'var(--red)'; }
+  }
+}
+// SDR unplugged banner — checks regardless of which tab is showing, so it's
+// never missed just because the STATUS tab (which drives the dot/loadStatus)
+// isn't the one currently on screen.
+async function checkSdrAlert() {
+  let detected = true; // don't flash the alert on a transient fetch failure
+  try {
+    const res = await fetch('http://localhost:5000/system/sdr-status');
+    const sdr = await res.json();
+    detected = !!sdr.detected;
+  } catch(e) { return; }
+  document.getElementById('sdr-alert-banner').classList.toggle('show', !detected);
+}
+checkSdrAlert();
+setInterval(checkSdrAlert, REFRESH_STATUS);
+
+setInterval(() => {
+  const hudPage = document.getElementById('page-hud');
+  if (hudPage.classList.contains('active')) loadHUD();
+}, REFRESH_HUD);
+
+setInterval(() => {
+  const statusPage = document.getElementById('page-status');
+  if (statusPage.classList.contains('active')) loadStatus();
+}, REFRESH_STATUS);
+
+// Auto-refresh map when visible
+setInterval(() => {
+  const mapPage = document.getElementById('page-map');
+  if (mapPage && mapPage.classList.contains('active')) refreshLiveMap();
+}, REFRESH_HUD);
+
+// Auto-refresh map periodically if tiles fail
+setInterval(checkMapLoaded, 30000);
+
+// Initial load
+loadStatus();
+</script>
+</body>
+</html>

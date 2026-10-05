@@ -1,0 +1,4 @@
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+  rm -rf /tmp/chromium
+  exec startx /usr/bin/chromium --noerrdialogs --disable-infobars --kiosk --no-sandbox --user-data-dir=/tmp/chromium file:///home/pi/kiosk.html
+fi
