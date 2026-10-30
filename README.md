@@ -1,5 +1,7 @@
 # ADS-B Kiosk
 
+![Kiosk UI: home, live map, traffic and status tabs (demo data)](docs/screenshot.png)
+
 Plug-and-play ADS-B flight tracking kiosk on Raspberry Pi 3B+ with Waveshare 3.5" TFT.
 
 ## Hardware
